@@ -4,6 +4,11 @@
 
 It is designed for the painful part of plugin shipping rather than DSP authoring: build orchestration, artifact discovery, signing, notarization, packaging, and release reporting for existing native plugin projects.
 
+## Required tooling
+
+- [Fozzy](https://github.com/ariacomputecompany/fozzy) provides the runtime and workflow tooling used by this project.
+- [Fzy](https://github.com/saint0x/fzy) provides the language compiler used to build `fzaudio`.
+
 ## Current shape
 
 - CMake-backed audio plugin projects are supported today.
