@@ -1,0 +1,210 @@
+use core.fs;
+
+fn default_config_text() -> str {
+    return "[plugin]\nname = \"ExamplePlugin\"\nvendor = \"ExampleVendor\"\nversion = \"0.1.0\"\nformats = [\"vst3\", \"au\"]\n\n[project]\ntype = \"auto\"\npath = \".\"\n\n[build]\nconfig = \"release\"\nuniversal_macos = true\n\n[signing.macos]\nenabled = false\nnotarize = false\nteam_id = \"\"\ndeveloper_id_application = \"\"\nnotarytool_profile = \"\"\n\n[package]\noutput = \"dist\"\n"
+}
+
+fn line_start(source: str, from: i32) -> i32 {
+    let mut idx = from
+    while idx < str.len(source) {
+        if idx == 0 {
+            return 0
+        }
+        if str.slice(source, idx - 1, idx) == "\n" {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return from
+}
+
+fn line_end(source: str, from: i32) -> i32 {
+    let mut idx = from
+    while idx < str.len(source) {
+        if str.slice(source, idx, idx + 1) == "\n" {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return str.len(source)
+}
+
+fn line_after(source: str, needle: str) -> str {
+    if str.contains(source, needle) == 0 {
+        return ""
+    }
+    let mut idx = 0
+    while idx < str.len(source) {
+        if idx + str.len(needle) <= str.len(source) && str.slice(source, idx, idx + str.len(needle)) == needle {
+            let start = line_start(source, idx)
+            let end = line_end(source, idx)
+            return str.trim(str.slice(source, start, end))
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn section_start(source: str, section_name: str) -> i32 {
+    let header = str.concat("[", section_name, "]")
+    let mut idx = 0
+    while idx < str.len(source) {
+        if idx + str.len(header) <= str.len(source) && str.slice(source, idx, idx + str.len(header)) == header {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return -1
+}
+
+fn next_section_start(source: str, from: i32) -> i32 {
+    let mut idx = from
+    while idx < str.len(source) {
+        let ch = str.slice(source, idx, idx + 1)
+        if ch == "[" {
+            return idx
+        }
+        idx = idx + 1
+    }
+    return str.len(source)
+}
+
+fn line_in_section(source: str, section_name: str, needle: str) -> str {
+    let start = section_start(source, section_name)
+    if start < 0 {
+        return ""
+    }
+    let header_end = line_end(source, start)
+    let search_start = if header_end < str.len(source) { header_end + 1 } else { header_end }
+    let search_end = next_section_start(source, search_start)
+    let mut idx = search_start
+    while idx < search_end {
+        if idx + str.len(needle) <= search_end && str.slice(source, idx, idx + str.len(needle)) == needle {
+            let start_idx = line_start(source, idx)
+            let end_idx = line_end(source, idx)
+            return str.trim(str.slice(source, start_idx, end_idx))
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn quoted_value(line: str) -> str {
+    let mut first = -1
+    let mut second = -1
+    let mut idx = 0
+    while idx < str.len(line) {
+        if str.slice(line, idx, idx + 1) == "\"" {
+            if first < 0 {
+                first = idx
+            } else {
+                second = idx
+                return str.slice(line, first + 1, second)
+            }
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn bool_value(line: str) -> i32 {
+    if str.contains(line, "true") == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn array_value(line: str) -> str {
+    let mut left = -1
+    let mut right = -1
+    let mut idx = 0
+    while idx < str.len(line) {
+        if str.slice(line, idx, idx + 1) == "[" && left < 0 {
+            left = idx
+        }
+        if str.slice(line, idx, idx + 1) == "]" {
+            right = idx
+        }
+        idx = idx + 1
+    }
+    if left < 0 || right < 0 || right <= left {
+        return ""
+    }
+    return str.trim(str.slice(line, left + 1, right))
+}
+
+pub fn init(project_root: str, config_path: str) -> i32 {
+    discard fs.mkdir(project_root)
+    if fs.exists(config_path) == 1 {
+        return cli.render.print_warn(str.concat("config already exists: ", config_path))
+    }
+    discard fs.write_file(config_path, default_config_text())
+    return cli.render.print_ok(str.concat("created starter config at ", config_path))
+}
+
+pub fn read_text(config_path: str) -> str {
+    if fs.exists(config_path) == 0 {
+        return ""
+    }
+    return fs.read_file(config_path)
+}
+
+pub fn plugin_name(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "plugin", "name = "))
+}
+
+pub fn vendor(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "plugin", "vendor = "))
+}
+
+pub fn version(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "plugin", "version = "))
+}
+
+pub fn formats(config_path: str) -> str {
+    let raw = array_value(line_in_section(read_text(config_path), "plugin", "formats = "))
+    if raw == "" {
+        return ""
+    }
+    return str.replace(str.replace(raw, "\"", ""), " ", "")
+}
+
+pub fn project_type(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "project", "type = "))
+}
+
+pub fn project_path(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "project", "path = "))
+}
+
+pub fn build_config(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "build", "config = "))
+}
+
+pub fn universal_macos(config_path: str) -> i32 {
+    return bool_value(line_in_section(read_text(config_path), "build", "universal_macos = "))
+}
+
+pub fn signing_enabled(config_path: str) -> i32 {
+    return bool_value(line_in_section(read_text(config_path), "signing.macos", "enabled = "))
+}
+
+pub fn notarize(config_path: str) -> i32 {
+    return bool_value(line_in_section(read_text(config_path), "signing.macos", "notarize = "))
+}
+
+pub fn team_id(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "signing.macos", "team_id = "))
+}
+
+pub fn developer_id_application(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "signing.macos", "developer_id_application = "))
+}
+
+pub fn notarytool_profile(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "signing.macos", "notarytool_profile = "))
+}
+
+pub fn package_output(config_path: str) -> str {
+    return quoted_value(line_in_section(read_text(config_path), "package", "output = "))
+}

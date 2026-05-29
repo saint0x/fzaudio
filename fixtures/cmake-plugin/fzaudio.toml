@@ -1,0 +1,22 @@
+[plugin]
+name = "FixtureAudio"
+vendor = "FzaudioFixtures"
+version = "1.0.0"
+formats = ["vst3", "au", "clap"]
+
+[project]
+type = "cmake"
+path = "."
+
+[build]
+config = "Release"
+universal_macos = false
+
+[signing.macos]
+enabled = false
+notarize = false
+team_id = ""
+developer_id_application = ""
+
+[package]
+output = "dist"

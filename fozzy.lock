@@ -1,0 +1,12 @@
+{
+  "dependencyGraphHash": "050493c7a4ba355c36ee0e80e385359defae8a639f023f3c0e06311d76c31ae5",
+  "graph": {
+    "deps": [],
+    "package": {
+      "manifestHash": "f33620260d7cd92d860c789de3602dbe6ad14773be21f3734d2993a8608bcc20",
+      "name": "fzaudio",
+      "version": "0.1.0"
+    }
+  },
+  "schemaVersion": "fozzylang.lock.v0"
+}

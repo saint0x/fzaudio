@@ -1,0 +1,23 @@
+[plugin]
+name = "FixtureAudio"
+vendor = "FzaudioFixtures"
+version = "1.0.0"
+formats = ["vst3", "au", "clap"]
+
+[project]
+type = "cmake"
+path = "."
+
+[build]
+config = "Release"
+universal_macos = false
+
+[signing.macos]
+enabled = true
+notarize = true
+team_id = "ABCDE12345"
+developer_id_application = "-"
+notarytool_profile = "missing-profile"
+
+[package]
+output = "notary-submit-dist"

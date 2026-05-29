@@ -1,0 +1,14 @@
+.DS_Store
+.fz/
+.fozzy/
+artifacts/
+dist/
+
+fixtures/**/.fzaudio/
+fixtures/**/.manual-build/
+fixtures/**/.probe-build*/
+fixtures/**/dist/
+fixtures/**/signed-dist/
+fixtures/**/notary-submit-dist/
+fixtures/**/notarized-dist/
+

@@ -1,0 +1,23 @@
+[plugin]
+name = "ExamplePlugin"
+vendor = "ExampleVendor"
+version = "0.1.0"
+formats = ["vst3", "au"]
+
+[project]
+type = "auto"
+path = "."
+
+[build]
+config = "release"
+universal_macos = true
+
+[signing.macos]
+enabled = false
+notarize = false
+team_id = ""
+developer_id_application = ""
+notarytool_profile = ""
+
+[package]
+output = "dist"

@@ -1,0 +1,9 @@
+mod config;
+mod doctor;
+mod inspect;
+mod pipeline;
+mod shell;
+
+fn boot() -> i32 {
+    return 0
+}

@@ -1,0 +1,92 @@
+use core.term;
+use core.text;
+
+fn ansi_enabled() -> i32 {
+    if term.is_interactive() == 1 {
+        return 1
+    }
+    return 0
+}
+
+fn esc() -> str {
+    return "\x1b"
+}
+
+fn color(code: str, value: str) -> str {
+    if ansi_enabled() == 0 {
+        return value
+    }
+    return str.concat(esc(), "[", code, "m", value, esc(), "[0m")
+}
+
+fn line(value: str) -> i32 {
+    discard term.print_line(value)
+    return 0
+}
+
+fn err_line(value: str) -> i32 {
+    discard term.eprint_line(value)
+    return 0
+}
+
+fn strong(value: str) -> str {
+    return color("1;38;5;255", value)
+}
+
+fn accent(value: str) -> str {
+    return color("1;38;5;81", value)
+}
+
+fn muted(value: str) -> str {
+    return color("38;5;245", value)
+}
+
+fn ok_tag() -> str {
+    return color("1;38;5;118", "ok")
+}
+
+fn warn_tag() -> str {
+    return color("1;38;5;214", "warn")
+}
+
+fn error_tag() -> str {
+    return color("1;38;5;203", "error")
+}
+
+fn info_tag() -> str {
+    return color("1;38;5;45", "info")
+}
+
+pub fn title(name: str, subtitle: str) -> i32 {
+    discard line(str.concat(strong(name), " ", muted(subtitle)))
+    return 0
+}
+
+pub fn blank() -> i32 {
+    return line("")
+}
+
+pub fn print_info(value: str) -> i32 {
+    return line(str.concat(info_tag(), " ", value))
+}
+
+pub fn print_ok(value: str) -> i32 {
+    return line(str.concat(ok_tag(), " ", value))
+}
+
+pub fn print_warn(value: str) -> i32 {
+    return err_line(str.concat(warn_tag(), " ", value))
+}
+
+pub fn print_error(value: str) -> i32 {
+    discard err_line(str.concat(error_tag(), " ", value))
+    return 1
+}
+
+pub fn print_help_section(name: str) -> i32 {
+    return line(accent(name))
+}
+
+pub fn print_help_row(left: str, right: str) -> i32 {
+    return line(str.concat("  ", text.pad_right(left, 18), right))
+}

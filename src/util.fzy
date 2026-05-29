@@ -1,0 +1,26 @@
+use core.process;
+use core.term;
+
+fn wants_json() -> i32 {
+    return process.has_flag("--json")
+}
+
+fn print_json(value: str) -> i32 {
+    discard term.print_line(value)
+    return 0
+}
+
+fn bool_json(flag: i32) -> str {
+    if flag == 1 {
+        return "true"
+    }
+    return "false"
+}
+
+fn int_json(value: i32) -> str {
+    return str.from_i32(value)
+}
+
+fn sample() -> i32 {
+    return wants_json()
+}

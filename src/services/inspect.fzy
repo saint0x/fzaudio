@@ -1,0 +1,171 @@
+use core.io;
+
+fn detect_kind(root: str) -> i32 {
+    let cmake_present = io.exists(path.join(root, "CMakeLists.txt"))
+    let jucer_path = find_jucer(root, 0, 2)
+    if cmake_present == 1 {
+        return model.types.PROJECT_KIND_CMAKE
+    }
+    if jucer_path != "" {
+        return model.types.PROJECT_KIND_JUCE
+    }
+    return model.types.PROJECT_KIND_UNKNOWN
+}
+
+fn find_jucer(root: str, depth: i32, max_depth: i32) -> str {
+    if depth > max_depth || io.is_dir(root) == 0 {
+        return ""
+    }
+    let entries = io.list_dir(root)
+    let mut idx = 0
+    while idx < list.len(entries) {
+        let name = list.get(entries, idx)
+        let full_path = path.join(root, name)
+        if path.extension(name) == "jucer" {
+            return full_path
+        }
+        if io.is_dir(full_path) == 1 {
+            let nested = find_jucer(full_path, depth + 1, max_depth)
+            if nested != "" {
+                return nested
+            }
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn detect_formats(root: str) -> str {
+    let mut formats = ""
+    let cmake = path.join(root, "CMakeLists.txt")
+    let mut source = ""
+    if io.exists(cmake) == 1 {
+        source = io.read_text(cmake)
+    }
+    if str.contains(source, "VST3") == 1 || str.contains(source, "vst3") == 1 {
+        formats = "vst3"
+    }
+    if str.contains(source, "AU") == 1 || str.contains(source, "AudioUnit") == 1 {
+        if formats == "" {
+            formats = "au"
+        } else {
+            formats = str.concat(formats, ",au")
+        }
+    }
+    if str.contains(source, "CLAP") == 1 || str.contains(source, "clap") == 1 {
+        if formats == "" {
+            formats = "clap"
+        } else {
+            formats = str.concat(formats, ",clap")
+        }
+    }
+    if formats == "" {
+        return "unknown"
+    }
+    return formats
+}
+
+pub fn kind(project_root: str) -> i32 {
+    return detect_kind(project_root)
+}
+
+pub fn kind_label(project_root: str) -> str {
+    return model.types.project_kind_label(detect_kind(project_root))
+}
+
+pub fn has_cmake(project_root: str) -> i32 {
+    return io.exists(path.join(project_root, "CMakeLists.txt"))
+}
+
+pub fn has_jucer(project_root: str) -> i32 {
+    let probe = find_jucer(project_root, 0, 2)
+    if probe == "" {
+        return 0
+    }
+    return 1
+}
+
+pub fn jucer_path(project_root: str) -> str {
+    return find_jucer(project_root, 0, 2)
+}
+
+pub fn formats_with_config(project_root: str, config_path: str) -> str {
+    let configured = services.config.formats(config_path)
+    if configured != "" {
+        return configured
+    }
+    return detect_formats(project_root)
+}
+
+pub fn formats(project_root: str) -> str {
+    return formats_with_config(project_root, path.join(project_root, "fzaudio.toml"))
+}
+
+pub fn run(project_root: str, config_path: str) -> i32 {
+    let jucer_path = find_jucer(project_root, 0, 2)
+    let kind = if has_cmake(project_root) == 1 {
+        model.types.PROJECT_KIND_CMAKE
+    } else if jucer_path != "" {
+        model.types.PROJECT_KIND_JUCE
+    } else {
+        model.types.PROJECT_KIND_UNKNOWN
+    }
+    let plugin_name = services.config.plugin_name(config_path)
+    let vendor = services.config.vendor(config_path)
+    let version = services.config.version(config_path)
+    let configured_project_type = services.config.project_type(config_path)
+    let configured_project_path = services.config.project_path(config_path)
+    let config_state = if io.exists(config_path) == 1 { "present" } else { "missing" }
+    let cmake_state = if has_cmake(project_root) == 1 { "present" } else { "missing" }
+    let jucer_state = if has_jucer(project_root) == 1 { "present" } else { "missing" }
+    if util.wants_json() == 1 {
+        discard util.print_json(str.concat(
+            "{\n",
+            "  \"command\": \"inspect\",\n",
+            "  \"ok\": ", util.bool_json(if kind != model.types.PROJECT_KIND_UNKNOWN { 1 } else { 0 }), ",\n",
+            "  \"projectRoot\": ", json.str(project_root), ",\n",
+            "  \"configPath\": ", json.str(config_path), ",\n",
+            "  \"plugin\": ", json.str(plugin_name), ",\n",
+            "  \"vendor\": ", json.str(vendor), ",\n",
+            "  \"version\": ", json.str(version), ",\n",
+            "  \"projectType\": ", json.str(configured_project_type), ",\n",
+            "  \"projectPath\": ", json.str(configured_project_path), ",\n",
+            "  \"kind\": ", json.str(model.types.project_kind_label(kind)), ",\n",
+            "  \"configState\": ", json.str(config_state), ",\n",
+            "  \"cmakeState\": ", json.str(cmake_state), ",\n",
+            "  \"jucerState\": ", json.str(jucer_state), ",\n",
+            "  \"jucerPath\": ", json.str(jucer_path), ",\n",
+            "  \"formats\": ", json.str(formats_with_config(project_root, config_path)), "\n",
+            "}\n"
+        ))
+        if kind == model.types.PROJECT_KIND_UNKNOWN {
+            return 1
+        }
+        return 0
+    }
+    discard cli.render.title("fzaudio inspect", project_root)
+    if plugin_name != "" {
+        discard cli.render.print_info(str.concat("plugin ", plugin_name, " ", version))
+    }
+    if vendor != "" {
+        discard cli.render.print_info(str.concat("vendor ", vendor))
+    }
+    if configured_project_type != "" {
+        discard cli.render.print_info(str.concat("project.type ", configured_project_type))
+    }
+    if configured_project_path != "" {
+        discard cli.render.print_info(str.concat("project.path ", configured_project_path))
+    }
+    discard cli.render.print_info(str.concat("kind ", model.types.project_kind_label(kind)))
+    discard cli.render.print_info(str.concat("config ", config_state))
+    discard cli.render.print_info(str.concat("cmake ", cmake_state))
+    discard cli.render.print_info(str.concat("jucer ", jucer_state))
+    if jucer_path != "" {
+        discard cli.render.print_info(str.concat("jucer.path ", jucer_path))
+    }
+    discard cli.render.print_info(str.concat("formats ", formats_with_config(project_root, config_path)))
+    if kind == model.types.PROJECT_KIND_UNKNOWN {
+        return 1
+    }
+    return 0
+}

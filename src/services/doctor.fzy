@@ -1,0 +1,209 @@
+use core.io;
+
+fn tool_found(name: str) -> i32 {
+    let status = services.shell.status_of(str.concat("command -v ", name, " >/dev/null 2>&1"), 4000)
+    if status == 0 {
+        return 1
+    }
+    return 0
+}
+
+fn print_tool(name: str, found: i32) -> i32 {
+    if found == 1 {
+        return cli.render.print_ok(str.concat(name, " available"))
+    }
+    return cli.render.print_warn(str.concat(name, " missing from PATH"))
+}
+
+fn run_mode(project_root: str, config_path: str, emit: i32) -> i32 {
+    let mut failures = 0
+    let mut blockers = "["
+    let mut blocker_count = 0
+    let config_present = io.exists(config_path)
+    let cmake = tool_found("cmake")
+    let xcodebuild = tool_found("xcodebuild")
+    let codesign = tool_found("codesign")
+    let xcrun = tool_found("xcrun")
+    let cmake_present = if io.exists(path.join(project_root, "CMakeLists.txt")) == 1 { 1 } else { 0 }
+    let jucer_present = services.inspect.has_jucer(project_root)
+    let signing_enabled = services.config.signing_enabled(config_path)
+    let notarize_enabled = services.config.notarize(config_path)
+    let project_type = services.config.project_type(config_path)
+    if emit == 1 && util.wants_json() == 0 {
+        discard cli.render.title("fzaudio doctor", project_root)
+    }
+    if config_present == 1 {
+        if emit == 1 && util.wants_json() == 0 {
+            discard cli.render.print_ok(str.concat("config present ", config_path))
+        }
+    } else {
+        failures = failures + 1
+        if blocker_count > 0 {
+            blockers = str.concat(blockers, ",")
+        }
+        blockers = str.concat(blockers, json.str("config_missing"))
+        blocker_count = blocker_count + 1
+        if emit == 1 && util.wants_json() == 0 {
+            discard cli.render.print_warn(str.concat("config missing ", config_path))
+        }
+    }
+    if emit == 1 && util.wants_json() == 0 && (cmake_present == 1 || project_type == "cmake") {
+        discard print_tool("cmake", cmake)
+    }
+    if emit == 1 && util.wants_json() == 0 && (jucer_present == 1 || project_type == "juce") {
+        discard print_tool("xcodebuild", xcodebuild)
+    }
+    if emit == 1 && util.wants_json() == 0 && signing_enabled == 1 {
+        discard print_tool("codesign", codesign)
+    }
+    if emit == 1 && util.wants_json() == 0 && notarize_enabled == 1 {
+        discard print_tool("xcrun", xcrun)
+    }
+    if emit == 1 && util.wants_json() == 0 && jucer_present == 1 {
+        let projucer = tool_found("Projucer")
+        discard print_tool("Projucer", projucer)
+    }
+    if signing_enabled == 1 {
+        let identity = services.config.developer_id_application(config_path)
+        if identity == "" {
+            failures = failures + 1
+            if blocker_count > 0 {
+                blockers = str.concat(blockers, ",")
+            }
+            blockers = str.concat(blockers, json.str("signing_identity_missing"))
+            blocker_count = blocker_count + 1
+            if emit == 1 && util.wants_json() == 0 {
+                discard cli.render.print_warn("signing enabled but developer_id_application is empty")
+            }
+        } else if emit == 1 && util.wants_json() == 0 {
+            discard cli.render.print_info(str.concat("signing identity ", identity))
+        }
+    }
+    if notarize_enabled == 1 {
+        let team_id = services.config.team_id(config_path)
+        let profile = services.config.notarytool_profile(config_path)
+        if team_id == "" {
+            failures = failures + 1
+            if blocker_count > 0 {
+                blockers = str.concat(blockers, ",")
+            }
+            blockers = str.concat(blockers, json.str("notary_team_id_missing"))
+            blocker_count = blocker_count + 1
+            if emit == 1 && util.wants_json() == 0 {
+                discard cli.render.print_warn("notarize enabled but team_id is empty")
+            }
+        } else if emit == 1 && util.wants_json() == 0 {
+            discard cli.render.print_info(str.concat("notary team ", team_id))
+        }
+        if profile == "" {
+            failures = failures + 1
+            if blocker_count > 0 {
+                blockers = str.concat(blockers, ",")
+            }
+            blockers = str.concat(blockers, json.str("notary_profile_missing"))
+            blocker_count = blocker_count + 1
+            if emit == 1 && util.wants_json() == 0 {
+                discard cli.render.print_warn("notarize enabled but notarytool_profile is empty")
+            }
+        } else if emit == 1 && util.wants_json() == 0 {
+            discard cli.render.print_info(str.concat("notary profile ", profile))
+        }
+    }
+    if emit == 1 && util.wants_json() == 0 && cmake_present == 1 {
+        discard cli.render.print_info("project has CMakeLists.txt")
+    }
+    if emit == 1 && util.wants_json() == 0 && jucer_present == 1 {
+        discard cli.render.print_info("project has .jucer metadata")
+    }
+    if cmake == 0 {
+        if cmake_present == 1 || project_type == "cmake" {
+            failures = failures + 1
+            if blocker_count > 0 {
+                blockers = str.concat(blockers, ",")
+            }
+            blockers = str.concat(blockers, json.str("cmake_missing"))
+            blocker_count = blocker_count + 1
+        }
+    }
+    if xcodebuild == 0 {
+        if jucer_present == 1 || project_type == "juce" {
+            failures = failures + 1
+            if blocker_count > 0 {
+                blockers = str.concat(blockers, ",")
+            }
+            blockers = str.concat(blockers, json.str("xcodebuild_missing"))
+            blocker_count = blocker_count + 1
+        }
+    }
+    if codesign == 0 {
+        if signing_enabled == 1 {
+            failures = failures + 1
+            if blocker_count > 0 {
+                blockers = str.concat(blockers, ",")
+            }
+            blockers = str.concat(blockers, json.str("codesign_missing"))
+            blocker_count = blocker_count + 1
+        }
+    }
+    if xcrun == 0 {
+        if notarize_enabled == 1 {
+            failures = failures + 1
+            if blocker_count > 0 {
+                blockers = str.concat(blockers, ",")
+            }
+            blockers = str.concat(blockers, json.str("xcrun_missing"))
+            blocker_count = blocker_count + 1
+        }
+    }
+    blockers = str.concat(blockers, "]")
+    if emit == 1 && util.wants_json() == 1 {
+        discard util.print_json(str.concat(
+            "{\n",
+            "  \"command\": \"doctor\",\n",
+            "  \"ok\": ", util.bool_json(if failures == 0 { 1 } else { 0 }), ",\n",
+            "  \"projectRoot\": ", json.str(project_root), ",\n",
+            "  \"configPath\": ", json.str(config_path), ",\n",
+            "  \"failures\": ", util.int_json(failures), ",\n",
+            "  \"blockers\": ", blockers, ",\n",
+            "  \"tools\": {\n",
+            "    \"cmake\": ", util.bool_json(cmake), ",\n",
+            "    \"xcodebuild\": ", util.bool_json(xcodebuild), ",\n",
+            "    \"codesign\": ", util.bool_json(codesign), ",\n",
+            "    \"xcrun\": ", util.bool_json(xcrun), "\n",
+            "  },\n",
+            "  \"project\": {\n",
+            "    \"type\": ", json.str(project_type), ",\n",
+            "    \"hasCmake\": ", util.bool_json(cmake_present), ",\n",
+            "    \"hasJucer\": ", util.bool_json(jucer_present), "\n",
+            "  },\n",
+            "  \"signing\": {\n",
+            "    \"enabled\": ", util.bool_json(signing_enabled), ",\n",
+            "    \"notarize\": ", util.bool_json(notarize_enabled), ",\n",
+            "    \"notaryProfile\": ", json.str(services.config.notarytool_profile(config_path)), "\n",
+            "  }\n",
+            "}\n"
+        ))
+        if failures == 0 {
+            return 0
+        }
+        return 1
+    }
+    if failures == 0 {
+        if emit == 1 {
+            discard cli.render.print_ok("doctor passed")
+        }
+        return 0
+    }
+    if emit == 1 {
+        discard cli.render.print_warn(str.concat("doctor found blockers: ", str.from_i32(failures)))
+    }
+    return 1
+}
+
+pub fn run(project_root: str, config_path: str) -> i32 {
+    return run_mode(project_root, config_path, 1)
+}
+
+pub fn run_quiet(project_root: str, config_path: str) -> i32 {
+    return run_mode(project_root, config_path, 0)
+}

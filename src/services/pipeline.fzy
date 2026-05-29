@@ -1,0 +1,1095 @@
+use core.io;
+
+fn source_root(project_root: str, config_path: str) -> str {
+    let configured = services.config.project_path(config_path)
+    if configured == "" || configured == "." {
+        return project_root
+    }
+    return path.join(project_root, configured)
+}
+
+fn dist_root(project_root: str, config_path: str) -> str {
+    let configured = services.config.package_output(config_path)
+    if configured == "" {
+        return path.join(project_root, "dist")
+    }
+    if configured == "." {
+        return project_root
+    }
+    return path.join(project_root, configured)
+}
+
+fn build_root(project_root: str) -> str {
+    return path.join(project_root, ".fzaudio")
+}
+
+fn cmake_build_root(project_root: str) -> str {
+    return path.join(build_root(project_root), "build")
+}
+
+fn artifacts_root(project_root: str) -> str {
+    return path.join(build_root(project_root), "artifacts")
+}
+
+fn adapter_kind(project_root: str, config_path: str) -> i32 {
+    let configured = services.config.project_type(config_path)
+    if configured == "juce" {
+        return model.types.PROJECT_KIND_JUCE
+    }
+    if configured == "cmake" {
+        return model.types.PROJECT_KIND_CMAKE
+    }
+    return services.inspect.kind(project_root)
+}
+
+fn configure_command(project_root: str, config_path: str) -> str {
+    let src = source_root(project_root, config_path)
+    let out = cmake_build_root(project_root)
+    let cfg = services.config.build_config(config_path)
+    let kind = adapter_kind(project_root, config_path)
+    if kind == model.types.PROJECT_KIND_CMAKE || kind == model.types.PROJECT_KIND_JUCE {
+        return str.concat("cmake -S ", src, " -B ", out, " -DCMAKE_BUILD_TYPE=", if cfg == "" { "Release" } else { cfg })
+    }
+    return ""
+}
+
+fn compile_command(project_root: str, config_path: str) -> str {
+    let out = cmake_build_root(project_root)
+    let cfg = services.config.build_config(config_path)
+    let kind = adapter_kind(project_root, config_path)
+    if kind == model.types.PROJECT_KIND_CMAKE || kind == model.types.PROJECT_KIND_JUCE {
+        return str.concat("cmake --build ", out, " --config ", if cfg == "" { "Release" } else { cfg })
+    }
+    return ""
+}
+
+fn ensure_root(path_value: str) -> i32 {
+    if io.exists(path_value) == 1 {
+        return 0
+    }
+    return io.mkdir(path_value)
+}
+
+fn write_build_plan(project_root: str, config_path: str) -> str {
+    let source = source_root(project_root, config_path)
+    let root = build_root(project_root)
+    let plan_path = path.join(root, "build.plan.txt")
+    discard ensure_root(root)
+    discard ensure_root(cmake_build_root(project_root))
+    let plugin_name = services.config.plugin_name(config_path)
+    let cfg = services.config.build_config(config_path)
+    let formats = services.inspect.formats_with_config(project_root, config_path)
+    let kind_label = model.types.project_kind_label(adapter_kind(project_root, config_path))
+    let configure = configure_command(project_root, config_path)
+    let build = compile_command(project_root, config_path)
+    discard io.write_text(plan_path, model.types.build_plan_text(plugin_name, kind_label, cfg, formats, source, cmake_build_root(project_root), configure, build))
+    return plan_path
+}
+
+fn format_root(dist: str, format: str) -> str {
+    return path.join(dist, format)
+}
+
+fn archive_root(dist: str) -> str {
+    return path.join(dist, "archives")
+}
+
+fn archive_name(config_path: str, format: str) -> str {
+    return str.concat(
+        services.config.plugin_name(config_path),
+        "-",
+        services.config.version(config_path),
+        "-",
+        format,
+        ".zip"
+    )
+}
+
+fn archive_path_for_staged(dist: str, config_path: str, staged_path: str) -> str {
+    let format = artifact_format_from_path(staged_path)
+    return path.join(archive_root(dist), archive_name(config_path, format))
+}
+
+fn checksum_path(dist: str) -> str {
+    return path.join(dist, "checksums.txt")
+}
+
+fn first_token(text: str) -> str {
+    let trimmed = str.trim(text)
+    let mut idx = 0
+    while idx < str.len(trimmed) {
+        let ch = str.slice(trimmed, idx, idx + 1)
+        if ch == " " || ch == "\n" || ch == "\t" || ch == "\r" {
+            return str.slice(trimmed, 0, idx)
+        }
+        idx = idx + 1
+    }
+    return trimmed
+}
+
+fn archive_sha256(archive_path: str) -> str {
+    if io.exists(archive_path) == 0 {
+        return ""
+    }
+    return first_token(services.shell.trimmed_stdout(str.concat(
+        "shasum -a 256 ",
+        services.shell.shell_quote(archive_path)
+    ), 120000))
+}
+
+fn archive_size(archive_path: str) -> i32 {
+    if io.exists(archive_path) == 0 {
+        return -1
+    }
+    return io.metadata(archive_path).size
+}
+
+fn checksums_text(project_root: str, config_path: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let dist = dist_root(project_root, config_path)
+    let mut out = ""
+    let mut idx = 0
+    while idx < list.len(items) {
+        let source = list.get(items, idx)
+        let staged = path.join(format_root(dist, artifact_format_from_path(source)), path.basename(source))
+        let archive_path = archive_path_for_staged(dist, config_path, staged)
+        if io.exists(archive_path) == 1 {
+            out = str.concat(
+                out,
+                archive_sha256(archive_path),
+                "  ",
+                path.basename(archive_path),
+                "\n"
+            )
+        }
+        idx = idx + 1
+    }
+    return out
+}
+
+fn artifact_format_from_path(path_value: str) -> str {
+    let name = path.basename(path_value)
+    let extension = path.extension(name)
+    if extension == "vst3" {
+        return "vst3"
+    }
+    if extension == "component" {
+        return "au"
+    }
+    if extension == "clap" {
+        return "clap"
+    }
+    return ""
+}
+
+fn is_plugin_artifact(path_value: str) -> i32 {
+    let meta = io.metadata(path_value)
+    let format = artifact_format_from_path(path_value)
+    if format == "" {
+        return 0
+    }
+    if format == "au" || format == "vst3" {
+        if meta.is_dir == 1 {
+            return 1
+        }
+        return 0
+    }
+    if format == "clap" {
+        if meta.is_file == 1 || meta.is_dir == 1 {
+            return 1
+        }
+    }
+    return 0
+}
+
+fn collect_artifacts(root: str, found: ListHandle) -> i32 {
+    if io.is_dir(root) == 0 {
+        return 0
+    }
+    let entries = io.list_dir(root)
+    let mut idx = 0
+    while idx < list.len(entries) {
+        let name = list.get(entries, idx)
+        let full_path = path.join(root, name)
+        if is_plugin_artifact(full_path) == 1 {
+            discard list.push(found, full_path)
+        } else if io.is_dir(full_path) == 1 {
+            discard collect_artifacts(full_path, found)
+        }
+        idx = idx + 1
+    }
+    return 0
+}
+
+fn discovered_artifacts(project_root: str) -> ListHandle {
+    let found = list.new()
+    discard collect_artifacts(cmake_build_root(project_root), found)
+    return found
+}
+
+fn artifact_count(project_root: str) -> i32 {
+    return list.len(discovered_artifacts(project_root))
+}
+
+fn first_artifact_for_format(project_root: str, format: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let mut idx = 0
+    while idx < list.len(items) {
+        let item = list.get(items, idx)
+        if artifact_format_from_path(item) == format {
+            return item
+        }
+        idx = idx + 1
+    }
+    return ""
+}
+
+fn artifact_inventory_text(project_root: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let mut out = ""
+    let mut idx = 0
+    while idx < list.len(items) {
+        let item = list.get(items, idx)
+        let meta = io.metadata(item)
+        let line = str.concat(
+            artifact_format_from_path(item), "|",
+            if meta.is_dir == 1 { "dir" } else { "file" }, "|",
+            item, "|",
+            str.from_i32(meta.size), "|",
+            str.from_i32(meta.modified_unix_secs), "\n"
+        )
+        out = str.concat(out, line)
+        idx = idx + 1
+    }
+    return out
+}
+
+fn artifact_inventory_json(project_root: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let mut out = "["
+    let mut idx = 0
+    while idx < list.len(items) {
+        let item = list.get(items, idx)
+        let meta = io.metadata(item)
+        if idx > 0 {
+            out = str.concat(out, ",")
+        }
+        out = str.concat(
+            out,
+            "{",
+            "\"format\":", json.str(artifact_format_from_path(item)), ",",
+            "\"kind\":", json.str(if meta.is_dir == 1 { "dir" } else { "file" }), ",",
+            "\"path\":", json.str(item), ",",
+            "\"size\":", util.int_json(meta.size), ",",
+            "\"modifiedUnixSecs\":", util.int_json(meta.modified_unix_secs),
+            "}"
+        )
+        idx = idx + 1
+    }
+    return str.concat(out, "]")
+}
+
+fn requested_format_count(formats: str) -> i32 {
+    let mut count = 0
+    if str.contains(formats, "vst3") == 1 {
+        count = count + 1
+    }
+    if str.contains(formats, "au") == 1 {
+        count = count + 1
+    }
+    if str.contains(formats, "clap") == 1 {
+        count = count + 1
+    }
+    return count
+}
+
+fn count_matching_formats(project_root: str, formats: str) -> i32 {
+    let mut matched = 0
+    if str.contains(formats, "vst3") == 1 && first_artifact_for_format(project_root, "vst3") != "" {
+        matched = matched + 1
+    }
+    if str.contains(formats, "au") == 1 && first_artifact_for_format(project_root, "au") != "" {
+        matched = matched + 1
+    }
+    if str.contains(formats, "clap") == 1 && first_artifact_for_format(project_root, "clap") != "" {
+        matched = matched + 1
+    }
+    return matched
+}
+
+fn copy_artifact_to_dist(artifact_path: str, dist: str) -> str {
+    let format = artifact_format_from_path(artifact_path)
+    let format_dir = format_root(dist, format)
+    let target = path.join(format_dir, path.basename(artifact_path))
+    discard ensure_root(format_dir)
+    if io.exists(target) == 1 {
+        discard io.remove(target)
+    }
+    let meta = io.metadata(artifact_path)
+    if meta.is_dir == 1 {
+        discard io.stage_tree(artifact_path, target)
+    } else {
+        discard io.copy_file(artifact_path, target)
+    }
+    return target
+}
+
+fn package_inventory(project_root: str, config_path: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let dist = dist_root(project_root, config_path)
+    let mut out = ""
+    let mut idx = 0
+    while idx < list.len(items) {
+        let source = list.get(items, idx)
+        let staged = copy_artifact_to_dist(source, dist)
+        let staged_meta = io.metadata(staged)
+        out = str.concat(
+            out,
+            artifact_format_from_path(source), "|",
+            source, "|",
+            staged, "|",
+            if staged_meta.is_dir == 1 { "dir" } else { "file" }, "|",
+            str.from_i32(staged_meta.size), "\n"
+        )
+        idx = idx + 1
+    }
+    return out
+}
+
+fn package_inventory_json(project_root: str, config_path: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let dist = dist_root(project_root, config_path)
+    let signing_enabled = services.config.signing_enabled(config_path)
+    discard ensure_root(archive_root(dist))
+    let mut out = "["
+    let mut idx = 0
+    while idx < list.len(items) {
+        let source = list.get(items, idx)
+        let staged = copy_artifact_to_dist(source, dist)
+        let staged_meta = io.metadata(staged)
+        let archive_path = archive_path_for_staged(dist, config_path, staged)
+        if io.exists(archive_path) == 1 {
+            discard io.remove(archive_path)
+        }
+        let archive_report = services.shell.run_and_capture(archive_command(staged, archive_path), 120000)
+        let verify_report = if signing_enabled == 1 { services.shell.run_and_capture(verify_sign_command(staged), 120000) } else { "" }
+        let archive_created = if services.shell.report_ok(archive_report) == 1 && io.exists(archive_path) == 1 { 1 } else { 0 }
+        let archive_sha = if archive_created == 1 { archive_sha256(archive_path) } else { "" }
+        let archive_bytes = if archive_created == 1 { archive_size(archive_path) } else { -1 }
+        if idx > 0 {
+            out = str.concat(out, ",")
+        }
+        out = str.concat(
+            out,
+            "{",
+            "\"format\":", json.str(artifact_format_from_path(source)), ",",
+            "\"source\":", json.str(source), ",",
+            "\"staged\":", json.str(staged), ",",
+            "\"kind\":", json.str(if staged_meta.is_dir == 1 { "dir" } else { "file" }), ",",
+            "\"size\":", util.int_json(staged_meta.size), ",",
+            "\"archivePath\":", json.str(archive_path), ",",
+            "\"archiveCreated\":", util.bool_json(archive_created), ",",
+            "\"archiveSize\":", if archive_bytes >= 0 { util.int_json(archive_bytes) } else { "null" }, ",",
+            "\"archiveSha256\":", if archive_sha != "" { json.str(archive_sha) } else { "null" }, ",",
+            "\"archive\":", archive_report, ",",
+            "\"signatureVerified\":", util.bool_json(
+                if signing_enabled == 1 && services.shell.report_ok(verify_report) == 1 { 1 } else { 0 }
+            ), ",",
+            "\"signature\":", if signing_enabled == 1 { verify_report } else { "null" },
+            "}"
+        )
+        idx = idx + 1
+    }
+    return str.concat(out, "]")
+}
+
+fn sign_command(config_path: str, artifact_path: str) -> str {
+    return str.concat(
+        "codesign --force --sign ",
+        services.shell.shell_quote(services.config.developer_id_application(config_path)),
+        " --timestamp=none ",
+        services.shell.shell_quote(artifact_path)
+    )
+}
+
+fn verify_sign_command(artifact_path: str) -> str {
+    return str.concat(
+        "codesign -v ",
+        services.shell.shell_quote(artifact_path)
+    )
+}
+
+fn archive_command(staged_path: str, archive_path: str) -> str {
+    return str.concat(
+        "ditto -c -k --sequesterRsrc --keepParent ",
+        services.shell.shell_quote(staged_path),
+        " ",
+        services.shell.shell_quote(archive_path)
+    )
+}
+
+fn notarize_submit_command(config_path: str, archive_path: str) -> str {
+    return str.concat(
+        "xcrun notarytool submit ",
+        services.shell.shell_quote(archive_path),
+        " --keychain-profile ",
+        services.shell.shell_quote(services.config.notarytool_profile(config_path)),
+        " --wait --output-format json"
+    )
+}
+
+fn staple_command(staged_path: str) -> str {
+    return str.concat(
+        "xcrun stapler staple ",
+        services.shell.shell_quote(staged_path)
+    )
+}
+
+fn staple_validate_command(staged_path: str) -> str {
+    return str.concat(
+        "xcrun stapler validate ",
+        services.shell.shell_quote(staged_path)
+    )
+}
+
+fn artifact_supports_staple(path_value: str) -> i32 {
+    let meta = io.metadata(path_value)
+    let format = artifact_format_from_path(path_value)
+    if meta.is_dir == 1 && (format == "vst3" || format == "au") {
+        return 1
+    }
+    return 0
+}
+
+fn sign_results_json(project_root: str, config_path: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let mut out = "["
+    let mut idx = 0
+    while idx < list.len(items) {
+        let artifact_path = list.get(items, idx)
+        let sign_report = services.shell.run_and_capture(sign_command(config_path, artifact_path), 120000)
+        let verify_report = services.shell.run_and_capture(verify_sign_command(artifact_path), 120000)
+        if idx > 0 {
+            out = str.concat(out, ",")
+        }
+        out = str.concat(
+            out,
+            "{",
+            "\"format\":", json.str(artifact_format_from_path(artifact_path)), ",",
+            "\"path\":", json.str(artifact_path), ",",
+            "\"sign\":", sign_report, ",",
+            "\"verify\":", verify_report, ",",
+            "\"ok\":", util.bool_json(
+                if services.shell.report_ok(sign_report) == 1 && services.shell.report_ok(verify_report) == 1 { 1 } else { 0 }
+            ),
+            "}"
+        )
+        idx = idx + 1
+    }
+    return str.concat(out, "]")
+}
+
+fn count_substring(text: str, needle: str) -> i32 {
+    let mut count = 0
+    let needle_len = str.len(needle)
+    if needle_len == 0 {
+        return 0
+    }
+    let mut idx = 0
+    while idx + needle_len <= str.len(text) {
+        if str.slice(text, idx, idx + needle_len) == needle {
+            count = count + 1
+        }
+        idx = idx + 1
+    }
+    return count
+}
+
+fn sign_failure_count(results_json: str) -> i32 {
+    return count_substring(results_json, "\"ok\": false") + count_substring(results_json, "\"ok\":false")
+}
+
+fn package_failure_count(results_json: str) -> i32 {
+    return count_substring(results_json, "\"archiveCreated\": false") + count_substring(results_json, "\"archiveCreated\":false")
+}
+
+fn notarize_failure_count(results_json: str) -> i32 {
+    return count_substring(results_json, "\"ok\": false") + count_substring(results_json, "\"ok\":false")
+}
+
+fn notarize_results_json(project_root: str, config_path: str) -> str {
+    let items = discovered_artifacts(project_root)
+    let dist = dist_root(project_root, config_path)
+    let mut out = "["
+    let mut idx = 0
+    while idx < list.len(items) {
+        let source = list.get(items, idx)
+        let staged = path.join(format_root(dist, artifact_format_from_path(source)), path.basename(source))
+        let archive_path = archive_path_for_staged(dist, config_path, staged)
+        let submit_report = services.shell.run_and_capture(notarize_submit_command(config_path, archive_path), 600000)
+        let submit_ok = services.shell.report_ok(submit_report)
+        let staple_report = if submit_ok == 1 && artifact_supports_staple(staged) == 1 { services.shell.run_and_capture(staple_command(staged), 120000) } else { "" }
+        let staple_validate = if submit_ok == 1 && artifact_supports_staple(staged) == 1 { services.shell.run_and_capture(staple_validate_command(staged), 120000) } else { "" }
+        let ok = if submit_ok == 1 && (artifact_supports_staple(staged) == 0 || (services.shell.report_ok(staple_report) == 1 && services.shell.report_ok(staple_validate) == 1)) { 1 } else { 0 }
+        if idx > 0 {
+            out = str.concat(out, ",")
+        }
+        out = str.concat(
+            out,
+            "{",
+            "\"format\":", json.str(artifact_format_from_path(source)), ",",
+            "\"staged\":", json.str(staged), ",",
+            "\"archivePath\":", json.str(archive_path), ",",
+            "\"submit\":", submit_report, ",",
+            "\"staple\":", if submit_ok == 1 && artifact_supports_staple(staged) == 1 { staple_report } else { "null" }, ",",
+            "\"stapleValidate\":", if submit_ok == 1 && artifact_supports_staple(staged) == 1 { staple_validate } else { "null" }, ",",
+            "\"ok\":", util.bool_json(ok),
+            "}"
+        )
+        idx = idx + 1
+    }
+    return str.concat(out, "]")
+}
+
+fn build_mode(project_root: str, config_path: str, emit: i32) -> i32 {
+    let kind = adapter_kind(project_root, config_path)
+    if kind == model.types.PROJECT_KIND_UNKNOWN {
+        if emit == 1 && util.wants_json() == 1 {
+            discard util.print_json(str.concat(
+                "{\n",
+                "  \"command\": \"build\",\n",
+                "  \"ok\": false,\n",
+                "  \"projectRoot\": ", json.str(project_root), ",\n",
+                "  \"configPath\": ", json.str(config_path), ",\n",
+                "  \"error\": ", json.str("unable to select project adapter"), "\n",
+                "}\n"
+            ))
+            return 1
+        }
+        if emit == 1 {
+            discard cli.render.title("fzaudio build", project_root)
+        }
+        return cli.render.print_error("unable to select project adapter")
+    }
+    let plan_path = write_build_plan(project_root, config_path)
+    let configure = configure_command(project_root, config_path)
+    let build_cmd = compile_command(project_root, config_path)
+    if emit == 1 && util.wants_json() == 0 {
+        discard cli.render.title("fzaudio build", project_root)
+        discard cli.render.print_info(str.concat("selected adapter ", model.types.project_kind_label(kind)))
+        discard cli.render.print_info(str.concat("plan ", plan_path))
+    }
+    if configure == "" || build_cmd == "" {
+        if emit == 1 && util.wants_json() == 1 {
+            discard util.print_json(str.concat(
+                "{\n",
+                "  \"command\": \"build\",\n",
+                "  \"ok\": false,\n",
+                "  \"projectRoot\": ", json.str(project_root), ",\n",
+                "  \"configPath\": ", json.str(config_path), ",\n",
+                "  \"adapter\": ", json.str(model.types.project_kind_label(kind)), ",\n",
+                "  \"error\": ", json.str("unable to synthesize build commands for adapter"), "\n",
+                "}\n"
+            ))
+            return 1
+        }
+        return cli.render.print_error("unable to synthesize build commands for adapter")
+    }
+    let configure_report = services.shell.run_and_capture(configure, 120000)
+    let configure_report_path = path.join(build_root(project_root), "configure.report.json")
+    discard io.write_text(configure_report_path, configure_report)
+    if services.shell.report_ok(configure_report) == 0 {
+        if emit == 1 && util.wants_json() == 1 {
+            discard util.print_json(str.concat(
+                "{\n",
+                "  \"command\": \"build\",\n",
+                "  \"ok\": false,\n",
+                "  \"projectRoot\": ", json.str(project_root), ",\n",
+                "  \"configPath\": ", json.str(config_path), ",\n",
+                "  \"adapter\": ", json.str(model.types.project_kind_label(kind)), ",\n",
+                "  \"planPath\": ", json.str(plan_path), ",\n",
+                "  \"reportPath\": ", json.str(configure_report_path), ",\n",
+                "  \"configureCommand\": ", json.str(configure), ",\n",
+                "  \"buildCommand\": ", json.str(build_cmd), ",\n",
+                "  \"artifacts\": []\n",
+                "}\n"
+            ))
+            return 1
+        }
+        if emit == 1 {
+            discard cli.render.print_warn(str.concat("configure failed; report ", configure_report_path))
+        }
+        return 1
+    }
+    let build_report = services.shell.run_and_capture(build_cmd, 120000)
+    let build_report_path = path.join(build_root(project_root), "build.report.json")
+    discard io.write_text(build_report_path, build_report)
+    let inventory_path = path.join(artifacts_root(project_root), "build.inventory.txt")
+    discard ensure_root(artifacts_root(project_root))
+    discard io.write_text(inventory_path, artifact_inventory_text(project_root))
+    if services.shell.report_ok(build_report) == 0 {
+        if emit == 1 && util.wants_json() == 1 {
+            discard util.print_json(str.concat(
+                "{\n",
+                "  \"command\": \"build\",\n",
+                "  \"ok\": false,\n",
+                "  \"projectRoot\": ", json.str(project_root), ",\n",
+                "  \"configPath\": ", json.str(config_path), ",\n",
+                "  \"adapter\": ", json.str(model.types.project_kind_label(kind)), ",\n",
+                "  \"planPath\": ", json.str(plan_path), ",\n",
+                "  \"reportPath\": ", json.str(build_report_path), ",\n",
+                "  \"inventoryPath\": ", json.str(inventory_path), ",\n",
+                "  \"artifactCount\": ", util.int_json(artifact_count(project_root)), ",\n",
+                "  \"artifacts\": ", artifact_inventory_json(project_root), "\n",
+                "}\n"
+            ))
+            return 1
+        }
+        if emit == 1 {
+            discard cli.render.print_warn(str.concat("build failed; report ", build_report_path))
+        }
+        return 1
+    }
+    if emit == 1 && util.wants_json() == 1 {
+        discard util.print_json(str.concat(
+            "{\n",
+            "  \"command\": \"build\",\n",
+            "  \"ok\": true,\n",
+            "  \"projectRoot\": ", json.str(project_root), ",\n",
+            "  \"configPath\": ", json.str(config_path), ",\n",
+            "  \"adapter\": ", json.str(model.types.project_kind_label(kind)), ",\n",
+            "  \"planPath\": ", json.str(plan_path), ",\n",
+            "  \"reportPath\": ", json.str(build_report_path), ",\n",
+            "  \"inventoryPath\": ", json.str(inventory_path), ",\n",
+            "  \"artifactCount\": ", util.int_json(artifact_count(project_root)), ",\n",
+            "  \"artifacts\": ", artifact_inventory_json(project_root), "\n",
+            "}\n"
+        ))
+        return 0
+    }
+    if emit == 1 {
+        discard cli.render.print_info(str.concat("discovered artifacts ", str.from_i32(artifact_count(project_root))))
+        discard cli.render.print_ok(str.concat("build completed; report ", build_report_path))
+    }
+    return 0
+}
+
+fn validate_mode(project_root: str, config_path: str, emit: i32) -> i32 {
+    let formats = services.inspect.formats_with_config(project_root, config_path)
+    let requested = requested_format_count(formats)
+    let matched = count_matching_formats(project_root, formats)
+    let total = artifact_count(project_root)
+    let report_path = path.join(build_root(project_root), "validate.report.txt")
+    let text = str.concat(
+        "formats=", formats, "\n",
+        "requested_formats=", str.from_i32(requested), "\n",
+        "matched_formats=", str.from_i32(matched), "\n",
+        "artifact_count=", str.from_i32(total), "\n",
+        "signing_enabled=", str.from_i32(services.config.signing_enabled(config_path)), "\n",
+        "notarize=", str.from_i32(services.config.notarize(config_path)), "\n",
+        "source_root=", source_root(project_root, config_path), "\n",
+        "inventory=\n",
+        artifact_inventory_text(project_root)
+    )
+    discard io.write_text(report_path, text)
+    let ok = if requested > 0 && matched < requested { 0 } else if total == 0 { 0 } else { 1 }
+    let report_json_path = path.join(build_root(project_root), "validate.report.json")
+    let validate_json = str.concat(
+        "{\n",
+        "  \"command\": \"validate\",\n",
+        "  \"ok\": ", util.bool_json(if ok == 1 { 1 } else { 0 }), ",\n",
+        "  \"projectRoot\": ", json.str(project_root), ",\n",
+        "  \"configPath\": ", json.str(config_path), ",\n",
+        "  \"formats\": ", json.str(formats), ",\n",
+        "  \"requestedFormats\": ", util.int_json(requested), ",\n",
+        "  \"matchedFormats\": ", util.int_json(matched), ",\n",
+        "  \"artifactCount\": ", util.int_json(total), ",\n",
+        "  \"reportPath\": ", json.str(report_path), ",\n",
+        "  \"reportJsonPath\": ", json.str(report_json_path), ",\n",
+        "  \"artifacts\": ", artifact_inventory_json(project_root), "\n",
+        "}\n"
+    )
+    discard io.write_text(report_json_path, validate_json)
+    if emit == 1 && util.wants_json() == 1 {
+        discard util.print_json(validate_json)
+        if ok == 1 {
+            return 0
+        }
+        return 1
+    }
+    if emit == 1 {
+        discard cli.render.title("fzaudio validate", project_root)
+        discard cli.render.print_info(str.concat("expected formats ", formats))
+        discard cli.render.print_info(str.concat("discovered artifacts ", str.from_i32(total)))
+    }
+    if requested > 0 && matched < requested {
+        if emit == 1 {
+            discard cli.render.print_warn(str.concat("missing artifacts for one or more requested formats; report ", report_path))
+        }
+        return 1
+    }
+    if total == 0 {
+        if emit == 1 {
+            discard cli.render.print_warn(str.concat("no plugin artifacts discovered; report ", report_path))
+        }
+        return 1
+    }
+    if emit == 1 {
+        discard cli.render.print_ok(str.concat("validation report ", report_path))
+    }
+    return 0
+}
+
+fn sign_mode(project_root: str, config_path: str, emit: i32) -> i32 {
+    if emit == 1 && util.wants_json() == 0 {
+        discard cli.render.title("fzaudio sign", project_root)
+    }
+    let total = artifact_count(project_root)
+    if services.config.signing_enabled(config_path) == 0 {
+        if emit == 1 && util.wants_json() == 1 {
+            discard util.print_json(str.concat(
+                "{\n",
+                "  \"command\": \"sign\",\n",
+                "  \"ok\": true,\n",
+                "  \"projectRoot\": ", json.str(project_root), ",\n",
+                "  \"configPath\": ", json.str(config_path), ",\n",
+                "  \"enabled\": false,\n",
+                "  \"notarize\": ", util.bool_json(services.config.notarize(config_path)), ",\n",
+                "  \"artifactCount\": ", util.int_json(total), "\n",
+                "}\n"
+            ))
+            return 0
+        }
+        if emit == 1 {
+            return cli.render.print_info("signing disabled in config")
+        }
+        return 0
+    }
+    let report_path = path.join(build_root(project_root), "sign.report.txt")
+    let report_json_path = path.join(build_root(project_root), "sign.report.json")
+    let results_json = sign_results_json(project_root, config_path)
+    let failures = sign_failure_count(results_json)
+    let ok = if failures == 0 && total > 0 { 1 } else { 0 }
+    let text = str.concat(
+        "identity=", services.config.developer_id_application(config_path), "\n",
+        "team_id=", services.config.team_id(config_path), "\n",
+        "notarize=", str.from_i32(services.config.notarize(config_path)), "\n",
+        "artifact_count=", str.from_i32(total), "\n",
+        "failed_artifacts=", str.from_i32(failures), "\n"
+    )
+    discard io.write_text(report_path, text)
+    let report_json = str.concat(
+        "{\n",
+        "  \"command\": \"sign\",\n",
+        "  \"ok\": ", util.bool_json(ok), ",\n",
+        "  \"projectRoot\": ", json.str(project_root), ",\n",
+        "  \"configPath\": ", json.str(config_path), ",\n",
+        "  \"enabled\": true,\n",
+        "  \"notarize\": ", util.bool_json(services.config.notarize(config_path)), ",\n",
+        "  \"identity\": ", json.str(services.config.developer_id_application(config_path)), ",\n",
+        "  \"reportPath\": ", json.str(report_path), ",\n",
+        "  \"reportJsonPath\": ", json.str(report_json_path), ",\n",
+        "  \"artifactCount\": ", util.int_json(total), ",\n",
+        "  \"failedArtifacts\": ", util.int_json(failures), ",\n",
+        "  \"artifacts\": ", results_json, "\n",
+        "}\n"
+    )
+    discard io.write_text(report_json_path, report_json)
+    if emit == 1 && util.wants_json() == 1 {
+        discard util.print_json(report_json)
+        if ok == 1 {
+            return 0
+        }
+        return 1
+    }
+    if emit == 1 {
+        if ok == 1 {
+            discard cli.render.print_ok(str.concat("signing report ", report_path))
+        } else {
+            discard cli.render.print_warn(str.concat("signing failed for one or more artifacts; report ", report_path))
+        }
+    }
+    if ok == 1 {
+        return 0
+    }
+    return 1
+}
+
+fn package_mode(project_root: str, config_path: str, emit: i32) -> i32 {
+    if emit == 1 && util.wants_json() == 0 {
+        discard cli.render.title("fzaudio package", project_root)
+    }
+    let out = dist_root(project_root, config_path)
+    discard ensure_root(out)
+    let total = artifact_count(project_root)
+    if total == 0 {
+        if emit == 1 && util.wants_json() == 1 {
+            discard util.print_json(str.concat(
+                "{\n",
+                "  \"command\": \"package\",\n",
+                "  \"ok\": false,\n",
+                "  \"projectRoot\": ", json.str(project_root), ",\n",
+                "  \"configPath\": ", json.str(config_path), ",\n",
+                "  \"distRoot\": ", json.str(out), ",\n",
+                "  \"artifactCount\": ", util.int_json(total), ",\n",
+                "  \"error\": ", json.str("no built plugin artifacts available to package"), "\n",
+                "}\n"
+            ))
+            return 1
+        }
+        if emit == 1 {
+            discard cli.render.print_warn("no built plugin artifacts available to package")
+        }
+        return 1
+    }
+    let inventory = package_inventory(project_root, config_path)
+    let bundle_manifest = path.join(out, "bundle-layout.txt")
+    let bundle_manifest_json = path.join(out, "bundle-layout.json")
+    let checksums_manifest = checksum_path(out)
+    discard ensure_root(archive_root(out))
+    let text = str.concat(
+        "plugin=", services.config.plugin_name(config_path), "\n",
+        "version=", services.config.version(config_path), "\n",
+        "formats=", services.inspect.formats_with_config(project_root, config_path), "\n",
+        "adapter=", model.types.project_kind_label(adapter_kind(project_root, config_path)), "\n",
+        "artifact_count=", str.from_i32(total), "\n",
+        "inventory=\n",
+        inventory
+    )
+    discard io.write_text(bundle_manifest, text)
+    let packaged_artifacts = package_inventory_json(project_root, config_path)
+    let archive_failures = package_failure_count(packaged_artifacts)
+    let ok = if archive_failures == 0 { 1 } else { 0 }
+    let package_json = str.concat(
+        "{\n",
+        "  \"command\": \"package\",\n",
+        "  \"ok\": ", util.bool_json(ok), ",\n",
+        "  \"projectRoot\": ", json.str(project_root), ",\n",
+        "  \"configPath\": ", json.str(config_path), ",\n",
+        "  \"distRoot\": ", json.str(out), ",\n",
+        "  \"bundleManifest\": ", json.str(bundle_manifest), ",\n",
+        "  \"bundleManifestJson\": ", json.str(bundle_manifest_json), ",\n",
+        "  \"checksumsPath\": ", json.str(checksums_manifest), ",\n",
+        "  \"artifactCount\": ", util.int_json(total), ",\n",
+        "  \"archiveFailures\": ", util.int_json(archive_failures), ",\n",
+        "  \"artifacts\": ", packaged_artifacts, "\n",
+        "}\n"
+    )
+    discard io.write_text(checksums_manifest, checksums_text(project_root, config_path))
+    discard io.write_text(bundle_manifest_json, package_json)
+    if emit == 1 && util.wants_json() == 1 {
+        discard util.print_json(package_json)
+        if ok == 1 {
+            return 0
+        }
+        return 1
+    }
+    if emit == 1 {
+        if ok == 1 {
+            discard cli.render.print_ok(str.concat("package layout written to ", bundle_manifest))
+        } else {
+            discard cli.render.print_warn(str.concat("package archive creation failed for one or more artifacts; report ", bundle_manifest_json))
+        }
+    }
+    if ok == 1 {
+        return 0
+    }
+    return 1
+}
+
+fn notarize_mode(project_root: str, config_path: str, emit: i32) -> i32 {
+    let out = dist_root(project_root, config_path)
+    let report_path = path.join(out, "notarize.report.json")
+    let results_json = notarize_results_json(project_root, config_path)
+    let failures = notarize_failure_count(results_json)
+    let ok = if failures == 0 && artifact_count(project_root) > 0 { 1 } else { 0 }
+    let report_json = str.concat(
+        "{\n",
+        "  \"command\": \"notarize\",\n",
+        "  \"ok\": ", util.bool_json(ok), ",\n",
+        "  \"projectRoot\": ", json.str(project_root), ",\n",
+        "  \"configPath\": ", json.str(config_path), ",\n",
+        "  \"distRoot\": ", json.str(out), ",\n",
+        "  \"reportPath\": ", json.str(report_path), ",\n",
+        "  \"profile\": ", json.str(services.config.notarytool_profile(config_path)), ",\n",
+        "  \"failedArtifacts\": ", util.int_json(failures), ",\n",
+        "  \"artifacts\": ", results_json, "\n",
+        "}\n"
+    )
+    discard io.write_text(report_path, report_json)
+    if emit == 1 && util.wants_json() == 1 {
+        discard util.print_json(report_json)
+        if ok == 1 {
+            return 0
+        }
+        return 1
+    }
+    if emit == 1 {
+        if ok == 1 {
+            discard cli.render.print_ok(str.concat("notarization report ", report_path))
+        } else {
+            discard cli.render.print_warn(str.concat("notarization failed for one or more artifacts; report ", report_path))
+        }
+    }
+    if ok == 1 {
+        return 0
+    }
+    return 1
+}
+
+pub fn release(project_root: str, config_path: str, output_dir: str) -> i32 {
+    if util.wants_json() == 0 {
+        discard cli.render.blank()
+        discard cli.render.title("fzaudio release", project_root)
+    }
+    let child_emit = if util.wants_json() == 1 { 0 } else { 1 }
+    let doctor_code = if child_emit == 1 { services.doctor.run(project_root, config_path) } else { services.doctor.run_quiet(project_root, config_path) }
+    let kind = adapter_kind(project_root, config_path)
+    let kind_label = services.inspect.kind_label(project_root)
+    let formats = services.inspect.formats_with_config(project_root, config_path)
+    let has_config = io.exists(config_path)
+    let has_cmake = services.inspect.has_cmake(project_root)
+    let has_jucer = services.inspect.has_jucer(project_root)
+    let build_code = if doctor_code == 0 { build_mode(project_root, config_path, child_emit) } else { 1 }
+    let validate_code = if build_code == 0 { validate_mode(project_root, config_path, child_emit) } else { 1 }
+    let sign_code = if validate_code == 0 { sign_mode(project_root, config_path, child_emit) } else { 1 }
+    let package_code = if sign_code == 0 || services.config.signing_enabled(config_path) == 0 { package_mode(project_root, config_path, child_emit) } else { 1 }
+    let notarize_code = if package_code == 0 && services.config.notarize(config_path) == 1 { notarize_mode(project_root, config_path, child_emit) } else if services.config.notarize(config_path) == 1 { 1 } else { 0 }
+    let out = dist_root(project_root, config_path)
+    let total = artifact_count(project_root)
+    discard ensure_root(out)
+    let manifest_path = path.join(out, "release.manifest.json")
+    let summary_json_path = path.join(out, "release.summary.json")
+    let bundle_manifest_json_path = path.join(out, "bundle-layout.json")
+    let checksums_path = checksum_path(out)
+    let notarize_report_path = path.join(out, "notarize.report.json")
+    let status = if doctor_code == 0 && kind != model.types.PROJECT_KIND_UNKNOWN && validate_code == 0 && package_code == 0 && notarize_code == 0 { "ready" } else { "blocked" }
+    discard io.write_text(manifest_path, model.types.release_manifest_text_full(
+        project_root,
+        config_path,
+        kind_label,
+        has_config,
+        has_cmake,
+        has_jucer,
+        formats,
+        "release",
+        status,
+        total,
+        output_dir,
+        bundle_manifest_json_path,
+        checksums_path,
+        summary_json_path,
+        if services.config.notarize(config_path) == 1 { json.str(notarize_report_path) } else { "null" },
+        doctor_code,
+        build_code,
+        validate_code,
+        sign_code,
+        package_code,
+        notarize_code,
+    ))
+    if util.wants_json() == 0 {
+        discard cli.render.print_info(str.concat("manifest ", manifest_path))
+    }
+    discard io.write_text(path.join(out, "release.summary.txt"), str.concat(
+        "doctor=", str.from_i32(doctor_code), "\n",
+        "build=", str.from_i32(build_code), "\n",
+        "validate=", str.from_i32(validate_code), "\n",
+        "sign=", str.from_i32(sign_code), "\n",
+        "package=", str.from_i32(package_code), "\n",
+        "notarize=", str.from_i32(notarize_code), "\n",
+        "artifact_count=", str.from_i32(total), "\n"
+    ))
+    let release_json = str.concat(
+        "{\n",
+        "  \"command\": \"release\",\n",
+        "  \"ok\": ", util.bool_json(if status == "ready" { 1 } else { 0 }), ",\n",
+        "  \"projectRoot\": ", json.str(project_root), ",\n",
+        "  \"configPath\": ", json.str(config_path), ",\n",
+        "  \"distRoot\": ", json.str(out), ",\n",
+        "  \"manifestPath\": ", json.str(manifest_path), ",\n",
+        "  \"bundleManifestJsonPath\": ", json.str(bundle_manifest_json_path), ",\n",
+        "  \"checksumsPath\": ", json.str(checksums_path), ",\n",
+        "  \"summaryJsonPath\": ", json.str(summary_json_path), ",\n",
+        "  \"notarizeReportPath\": ", if services.config.notarize(config_path) == 1 { json.str(notarize_report_path) } else { "null" }, ",\n",
+        "  \"status\": ", json.str(status), ",\n",
+        "  \"artifactCount\": ", util.int_json(total), ",\n",
+        "  \"doctor\": ", util.int_json(doctor_code), ",\n",
+        "  \"build\": ", util.int_json(build_code), ",\n",
+        "  \"validate\": ", util.int_json(validate_code), ",\n",
+        "  \"sign\": ", util.int_json(sign_code), ",\n",
+        "  \"package\": ", util.int_json(package_code), ",\n",
+        "  \"notarize\": ", util.int_json(notarize_code), "\n",
+        "}\n"
+    )
+    discard io.write_text(summary_json_path, release_json)
+    if util.wants_json() == 1 {
+        discard util.print_json(release_json)
+        if status == "blocked" {
+            return 1
+        }
+        return 0
+    }
+    if status == "blocked" {
+        discard cli.render.print_warn("release blocked pending doctor, build, validation, or packaging issues")
+        return 1
+    }
+    discard cli.render.print_ok("release artifacts are staged and summarized")
+    return 0
+}
+
+pub fn clean(project_root: str, config_path: str) -> i32 {
+    let out = dist_root(project_root, config_path)
+    let build = build_root(project_root)
+    let mut removed = 0
+    if util.wants_json() == 0 {
+        discard cli.render.title("fzaudio clean", project_root)
+    }
+    if io.exists(out) == 1 {
+        discard io.remove(out)
+        removed = removed + 1
+        if util.wants_json() == 0 {
+            discard cli.render.print_info(str.concat("removed ", out))
+        }
+    }
+    if io.exists(build) == 1 {
+        discard io.remove(build)
+        removed = removed + 1
+        if util.wants_json() == 0 {
+            discard cli.render.print_info(str.concat("removed ", build))
+        }
+    }
+    if util.wants_json() == 1 {
+        discard util.print_json(str.concat(
+            "{\n",
+            "  \"command\": \"clean\",\n",
+            "  \"ok\": true,\n",
+            "  \"projectRoot\": ", json.str(project_root), ",\n",
+            "  \"configPath\": ", json.str(config_path), ",\n",
+            "  \"distRoot\": ", json.str(out), ",\n",
+            "  \"buildRoot\": ", json.str(build), ",\n",
+            "  \"removedCount\": ", util.int_json(removed), "\n",
+            "}\n"
+        ))
+        return 0
+    }
+    if removed == 0 {
+        return cli.render.print_info("nothing to clean")
+    }
+    return cli.render.print_ok("cleaned generated outputs")
+}
+
+pub fn build(project_root: str, config_path: str) -> i32 {
+    return build_mode(project_root, config_path, 1)
+}
+
+pub fn validate(project_root: str, config_path: str) -> i32 {
+    return validate_mode(project_root, config_path, 1)
+}
+
+pub fn sign(project_root: str, config_path: str) -> i32 {
+    return sign_mode(project_root, config_path, 1)
+}
+
+pub fn package(project_root: str, config_path: str) -> i32 {
+    return package_mode(project_root, config_path, 1)
+}

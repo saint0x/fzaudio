@@ -1,0 +1,119 @@
+const PROJECT_KIND_UNKNOWN: i32 = 0
+const PROJECT_KIND_JUCE: i32 = 1
+const PROJECT_KIND_CMAKE: i32 = 2
+
+fn project_kind_label(kind: i32) -> str {
+    if kind == PROJECT_KIND_JUCE {
+        return "juce"
+    }
+    if kind == PROJECT_KIND_CMAKE {
+        return "cmake"
+    }
+    return "unknown"
+}
+
+fn release_manifest_text(
+    root: str,
+    config_path: str,
+    kind_label: str,
+    has_config: i32,
+    has_cmake: i32,
+    has_jucer: i32,
+    formats: str,
+    stage: str,
+    status: str,
+) -> str {
+    return str.concat(
+        "{\n",
+        "  \"product\": \"fzaudio\",\n",
+        "  \"stage\": \"", stage, "\",\n",
+        "  \"status\": \"", status, "\",\n",
+        "  \"summary\": {\n",
+        "    \"root\": \"", root, "\",\n",
+        "    \"configPath\": \"", config_path, "\",\n",
+        "    \"kind\": \"", kind_label, "\",\n",
+        "    \"hasConfig\": ", if has_config == 1 { "true" } else { "false" }, ",\n",
+        "    \"hasCmake\": ", if has_cmake == 1 { "true" } else { "false" }, ",\n",
+        "    \"hasJucer\": ", if has_jucer == 1 { "true" } else { "false" }, ",\n",
+        "    \"formats\": \"", formats, "\"\n",
+        "  }\n",
+        "}\n"
+    )
+}
+
+fn release_manifest_text_full(
+    root: str,
+    config_path: str,
+    kind_label: str,
+    has_config: i32,
+    has_cmake: i32,
+    has_jucer: i32,
+    formats: str,
+    stage: str,
+    status: str,
+    artifact_count: i32,
+    dist_root: str,
+    bundle_manifest_json_path: str,
+    checksums_path: str,
+    summary_json_path: str,
+    notarize_report_path_json: str,
+    doctor_code: i32,
+    build_code: i32,
+    validate_code: i32,
+    sign_code: i32,
+    package_code: i32,
+    notarize_code: i32,
+) -> str {
+    return str.concat(
+        "{\n",
+        "  \"product\": \"fzaudio\",\n",
+        "  \"stage\": \"", stage, "\",\n",
+        "  \"status\": \"", status, "\",\n",
+        "  \"artifacts\": ", str.from_i32(artifact_count), ",\n",
+        "  \"distRoot\": \"", dist_root, "\",\n",
+        "  \"bundleManifestJsonPath\": \"", bundle_manifest_json_path, "\",\n",
+        "  \"checksumsPath\": \"", checksums_path, "\",\n",
+        "  \"summaryJsonPath\": \"", summary_json_path, "\",\n",
+        "  \"notarizeReportPath\": ", notarize_report_path_json, ",\n",
+        "  \"summary\": {\n",
+        "    \"root\": \"", root, "\",\n",
+        "    \"configPath\": \"", config_path, "\",\n",
+        "    \"kind\": \"", kind_label, "\",\n",
+        "    \"hasConfig\": ", if has_config == 1 { "true" } else { "false" }, ",\n",
+        "    \"hasCmake\": ", if has_cmake == 1 { "true" } else { "false" }, ",\n",
+        "    \"hasJucer\": ", if has_jucer == 1 { "true" } else { "false" }, ",\n",
+        "    \"formats\": \"", formats, "\"\n",
+        "  },\n",
+        "  \"results\": {\n",
+        "    \"doctor\": ", str.from_i32(doctor_code), ",\n",
+        "    \"build\": ", str.from_i32(build_code), ",\n",
+        "    \"validate\": ", str.from_i32(validate_code), ",\n",
+        "    \"sign\": ", str.from_i32(sign_code), ",\n",
+        "    \"package\": ", str.from_i32(package_code), ",\n",
+        "    \"notarize\": ", str.from_i32(notarize_code), "\n",
+        "  }\n",
+        "}\n"
+    )
+}
+
+fn build_plan_text(
+    plugin_name: str,
+    kind_label: str,
+    build_config: str,
+    formats: str,
+    source_root: str,
+    build_root: str,
+    configure_command: str,
+    build_command: str,
+) -> str {
+    return str.concat(
+        "plugin=", plugin_name, "\n",
+        "adapter=", kind_label, "\n",
+        "config=", build_config, "\n",
+        "formats=", formats, "\n",
+        "source_root=", source_root, "\n",
+        "build_root=", build_root, "\n",
+        "configure=", configure_command, "\n",
+        "build=", build_command, "\n"
+    )
+}
