@@ -6,8 +6,19 @@ It is designed for the painful part of plugin shipping rather than DSP authoring
 
 ## Required tooling
 
+- `fzaudio` is the application repo.
 - [Fozzy](https://github.com/ariacomputecompany/fozzy) provides the runtime and workflow tooling used by this project.
 - [Fzy](https://github.com/saint0x/fzy) provides the language compiler used to build `fzaudio`.
+- In practice you will usually want all three repositories locally, with `fzy` required and `fozzy` optional.
+
+For a full interactive local setup, run:
+
+```bash
+./comprehensive-install.sh
+```
+
+The installer checks Rust first, then can reuse the current `fzaudio` checkout and clone `fzy` plus optional `fozzy` as siblings, or clone all three repositories into a custom parent directory that you paste at the prompt.
+It is safe to rerun: matching existing checkouts are updated instead of duplicated, and conflicting non-repo directories fail fast.
 
 ## Current shape
 
