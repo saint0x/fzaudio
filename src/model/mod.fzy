@@ -1,1 +1,5 @@
 mod types;
+
+fn preflight() -> i32 {
+    return 0
+}

@@ -1,5 +1,6 @@
 use core.proc;
 use core.text;
+use core.fs;
 
 fn set_if_present(env_map: ProcessEnv, key: str) -> i32 {
     let value = env.get(key)
@@ -49,42 +50,54 @@ fn shell_quote(value: str) -> str {
     return str.concat("\"", str.replace(value, "\"", "\\\""), "\"")
 }
 
+fn temp_path(name: str) -> str {
+    return str.concat("/tmp/fzaudio.", name)
+}
+
+fn command_with_artifacts(command: str, stdout_path: str, stderr_path: str) -> str {
+    return str.concat(
+        command,
+        str.concat(
+            " > ",
+            str.concat(shell_quote(stdout_path), str.concat(" 2> ", shell_quote(stderr_path))),
+        ),
+    )
+}
+
+fn run_command(command: str) -> str {
+    return str.concat("/bin/sh -lc ", shell_quote(command))
+}
+
 fn stdout_of(command: str, timeout_ms: i32) -> str {
-    let argv = shell_argv(command)
-    let env_map = default_proc_env()
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
-    discard proc.wait(handle, timeout_ms)
-    return proc.stdout(handle)
+    discard timeout_ms
+    let stdout_path = temp_path("stdout")
+    let stderr_path = temp_path("stderr")
+    discard proc.run(run_command(command_with_artifacts(command, stdout_path, stderr_path)))
+    return fs.read_file(stdout_path)
 }
 
 fn stderr_of(command: str, timeout_ms: i32) -> str {
-    let argv = shell_argv(command)
-    let env_map = default_proc_env()
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
-    discard proc.wait(handle, timeout_ms)
-    return proc.stderr(handle)
+    discard timeout_ms
+    let stdout_path = temp_path("stdout")
+    let stderr_path = temp_path("stderr")
+    discard proc.run(run_command(command_with_artifacts(command, stdout_path, stderr_path)))
+    return fs.read_file(stderr_path)
 }
 
 fn status_of(command: str, timeout_ms: i32) -> i32 {
-    let argv = shell_argv(command)
-    let env_map = default_proc_env()
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
-    discard proc.wait(handle, timeout_ms)
-    return proc.exit_code(handle)
+    discard timeout_ms
+    let stdout_path = temp_path("stdout")
+    let stderr_path = temp_path("stderr")
+    return proc.run(run_command(command_with_artifacts(command, stdout_path, stderr_path)))
 }
 
 fn run_and_capture(command: str, timeout_ms: i32) -> str {
-    let argv = shell_argv(command)
-    let env_map = default_proc_env()
-    let handle = proc.spawn_cmd("/bin/sh", argv, env_map, "")
-    defer proc.close(handle)
-    discard proc.wait(handle, timeout_ms)
-    let status = proc.exit_code(handle)
-    let stdout = proc.stdout(handle)
-    let stderr = proc.stderr(handle)
+    discard timeout_ms
+    let stdout_path = temp_path("stdout")
+    let stderr_path = temp_path("stderr")
+    let status = proc.run(run_command(command_with_artifacts(command, stdout_path, stderr_path)))
+    let stdout = fs.read_file(stdout_path)
+    let stderr = fs.read_file(stderr_path)
     return str.concat(
         "{\n",
         "  \"command\": ", json.str(command), ",\n",

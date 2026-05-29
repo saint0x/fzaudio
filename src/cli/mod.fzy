@@ -1,2 +1,40 @@
 mod commands;
-mod render;
+
+fn boot() -> i32 {
+    return commands.boot()
+}
+
+fn print_help() -> i32 {
+    return commands.print_help()
+}
+
+fn run(mode: str) -> i32 {
+    if mode == "init" {
+        return commands.run_init()
+    }
+    if mode == "doctor" {
+        return commands.run_doctor()
+    }
+    if mode == "inspect" {
+        return commands.run_inspect()
+    }
+    if mode == "build" {
+        return commands.run_build()
+    }
+    if mode == "validate" {
+        return commands.run_validate()
+    }
+    if mode == "sign" {
+        return commands.run_sign()
+    }
+    if mode == "package" {
+        return commands.run_package()
+    }
+    if mode == "release" {
+        return commands.run_release()
+    }
+    if mode == "clean" {
+        return commands.run_clean()
+    }
+    return commands.print_unknown_mode(mode)
+}

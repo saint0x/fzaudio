@@ -1,50 +1,20 @@
-use core.log;
 use core.process;
 
-mod cli;
+mod api;
 mod model;
 mod services;
+mod runtime;
+mod cli;
 mod tests;
 mod util;
 
 fn main() -> i32 {
     let mode = process.argv_or(1, "help")
     if mode == "--help" || mode == "-h" || mode == "help" {
-        log.quiet()
-        cli.commands.boot()
-        return cli.commands.print_help()
+        discard cli.boot()
+        return cli.print_help()
     }
-    log.use_stderr()
-    log.set_level_name("info")
-    cli.commands.boot()
-    services.boot()
-    if mode == "init" {
-        return cli.commands.run_init()
-    }
-    if mode == "doctor" {
-        return cli.commands.run_doctor()
-    }
-    if mode == "inspect" {
-        return cli.commands.run_inspect()
-    }
-    if mode == "build" {
-        return cli.commands.run_build()
-    }
-    if mode == "validate" {
-        return cli.commands.run_validate()
-    }
-    if mode == "sign" {
-        return cli.commands.run_sign()
-    }
-    if mode == "package" {
-        return cli.commands.run_package()
-    }
-    if mode == "release" {
-        return cli.commands.run_release()
-    }
-    if mode == "clean" {
-        return cli.commands.run_clean()
-    }
-    discard cli.commands.print_unknown_mode(mode)
-    return 2
+    discard runtime.boot()
+    discard cli.boot()
+    return cli.run(mode)
 }

@@ -1,9 +1,13 @@
-mod config;
-mod doctor;
-mod inspect;
-mod pipeline;
-mod shell;
-
 fn boot() -> i32 {
     return 0
+}
+
+fn command_result_json(command: str, status: str, detail: str) -> str {
+    return str.concat(
+        "{\n",
+        "  \"command\": ", json.str(command), ",\n",
+        "  \"status\": ", json.str(status), ",\n",
+        "  \"detail\": ", json.str(detail), "\n",
+        "}\n"
+    )
 }
